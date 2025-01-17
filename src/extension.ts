@@ -1,12 +1,11 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
+import * as path from "path";
+import * as fs from "fs";
+import * as readline from "readline";
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
-  // Use the console to output diagnostic information (console.log) and errors (console.error)
-  // This line of code will only be executed once when your extension is activated
+export function activate(context: vscode.ExtensionContext): void {
   console.log(
     'Congratulations, your extension "csv-view-and-export" is now active!',
   );
@@ -15,30 +14,90 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       "csv-view-and-export.showSpreadSheet",
       () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          vscode.window.showErrorMessage("No active editor.");
+          return;
+        }
+
+        const filePath = editor.document.fileName;
+        if (path.extname(filePath).toLowerCase() !== ".csv") {
+          vscode.window.showErrorMessage("Active file is not a CSV file.");
+          return;
+        }
+
         const panel = vscode.window.createWebviewPanel(
           "spreadsheetView",
           "Spreadsheet",
-          vscode.ViewColumn.One,
-          {
-            enableScripts: true, // スクリプトを有効にする
-          },
+          vscode.ViewColumn.Beside,
+          { enableScripts: true },
         );
 
-        // Webview の HTML コンテンツを設定
-        panel.webview.html = getWebviewContent();
+        panel.webview.html = getInitialWebviewContent();
+
+        // 初期表示のロード
+        loadAndSendCSVContent(filePath, panel);
+
+        // ファイルの変更を監視
+        context.subscriptions.push(
+          vscode.workspace.onDidChangeTextDocument((e) => {
+            if (e.document.fileName === filePath) {
+              loadAndSendCSVContent(filePath, panel);
+            }
+          }),
+        );
+
+        // エディタのスクロールを監視
+        const editorScrollDisposable =
+          vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+            if (event.textEditor.document.fileName === filePath) {
+              const firstVisibleLine =
+                event.textEditor.visibleRanges[0].start.line;
+              panel.webview.postMessage({
+                type: "scroll",
+                firstVisibleLine,
+              });
+            }
+          });
+        context.subscriptions.push(editorScrollDisposable);
       },
     ),
   );
 }
 
-function getWebviewContent(): string {
+function loadAndSendCSVContent(filePath: string, panel: vscode.WebviewPanel) {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath),
+    crlfDelay: Infinity,
+  });
+
+  let chunk: string[] = [];
+  const chunkSize = 50;
+
+  rl.on("line", (line) => {
+    chunk.push(line);
+    if (chunk.length >= chunkSize) {
+      panel.webview.postMessage({ type: "update", rows: chunk });
+      chunk = [];
+    }
+  });
+
+  rl.on("close", () => {
+    if (chunk.length > 0) {
+      panel.webview.postMessage({ type: "update", rows: chunk });
+    }
+    panel.webview.postMessage({ type: "done" });
+  });
+}
+
+function getInitialWebviewContent(): string {
   return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Spreadsheet</title>
+      <title>CSV Viewer</title>
       <style>
         table {
           width: 100%;
@@ -47,35 +106,53 @@ function getWebviewContent(): string {
         th, td {
           border: 1px solid #ddd;
           padding: 8px;
-          text-align: center;
+          text-align: left;
         }
         th {
           background-color: #f4f4f4;
         }
+        #table-container {
+          overflow-y: auto;
+          height: 100%;
+        }
       </style>
     </head>
     <body>
-      <table>
-        <tr>
-          <th>Column 1</th>
-          <th>Column 2</th>
-          <th>Column 3</th>
-        </tr>
-        <tr>
-          <td>Row 1</td>
-          <td>Data 1</td>
-          <td>Data 2</td>
-        </tr>
-        <tr>
-          <td>Row 2</td>
-          <td>Data 3</td>
-          <td>Data 4</td>
-        </tr>
-      </table>
+      <div id="table-container"></div>
+      <script>
+        const tableContainer = document.getElementById('table-container');
+
+        window.addEventListener('message', event => {
+          const message = event.data;
+
+          if (message.type === 'update') {
+            const table = document.createElement('table');
+            message.rows.forEach(row => {
+              const tr = document.createElement('tr');
+              row.split(',').forEach(cell => {
+                const td = document.createElement('td');
+                td.textContent = cell.trim();
+                tr.appendChild(td);
+              });
+              table.appendChild(tr);
+            });
+            tableContainer.innerHTML = '';
+            tableContainer.appendChild(table);
+          } else if (message.type === 'scroll') {
+            const firstVisibleLine = message.firstVisibleLine;
+            const rows = tableContainer.getElementsByTagName('tr');
+            if (rows[firstVisibleLine]) {
+              rows[firstVisibleLine].scrollIntoView({ behavior: 'smooth' });
+            }
+          } else if (message.type === 'done') {
+            console.log('All rows loaded');
+          }
+        });
+      </script>
     </body>
     </html>
   `;
 }
 
 // This method is called when your extension is deactivated
-export function deactivate() {}
+export function deactivate(): void {}
