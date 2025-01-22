@@ -120,11 +120,22 @@ function getInitialWebviewContent(): string {
           background-color: #0078d4; /* 濃い青色 */
           color: white; /* 文字色を白に */
           z-index: 1;
+          text-align: center;
         }
         th, td {
           border: 1px solid #ddd;
           padding: 8px;
+        }
+        th {
           text-align: left;
+        }
+        td.number {
+          color: lemonchiffon;
+          text-align: right; /* 数値は右寄せ */
+        }
+        td.date {
+          color: lightcyan;
+          text-align: center; /* 日付は中央揃え */
         }
         #table-container {
           overflow-y: auto;
@@ -143,6 +154,12 @@ function getInitialWebviewContent(): string {
       </div>
       <script>
         const csvTable = document.getElementById('csv-table');
+
+        // 日付判定関数
+        function isValidDate(dateString) {
+          const date = new Date(dateString);
+          return !isNaN(date) && /^\\d{4}-\\d{2}-\\d{2}$/.test(dateString);
+        }
 
         // WebView からのメッセージを受信
         window.addEventListener('message', event => {
@@ -165,7 +182,16 @@ function getInitialWebviewContent(): string {
               const tr = document.createElement('tr');
               row.split(',').forEach(cell => {
                 const td = document.createElement('td');
-                td.textContent = cell.trim();
+                const trimmedCell = cell.trim();
+
+                // セルごとにスタイルを適用
+                if (!isNaN(trimmedCell) && trimmedCell !== '') {
+                  td.classList.add('number'); // 数値の場合
+                } else if (isValidDate(trimmedCell)) {
+                  td.classList.add('date'); // 日付の場合
+                }
+
+                td.textContent = trimmedCell;
                 tr.appendChild(td);
               });
               csvBody.appendChild(tr);
