@@ -1,30 +1,39 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from "vscode";
-import * as path from "path";
-import * as fs from "fs";
-import * as readline from "readline";
+// import * as path from "path";
+// import * as fs from "fs";
+// import * as readline from "readline";
 
 export function activate(context: vscode.ExtensionContext): void {
-  console.log(
-    'Congratulations, your extension "csv-view-and-export" is now active!',
-  );
+  console.log("CSV Preview extension is now active!");
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "csv-view-and-export.showSpreadSheet",
-      () => {
+      async () => {
+        console.log("Command execution started");
+
         const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          vscode.window.showErrorMessage("No active editor.");
+        if (!editor || !editor.document.fileName.endsWith(".csv")) {
+          vscode.window.showErrorMessage("Please open a CSV file to preview.");
           return;
         }
 
-        const filePath = editor.document.fileName;
-        if (path.extname(filePath).toLowerCase() !== ".csv") {
-          vscode.window.showErrorMessage("Active file is not a CSV file.");
+        console.log("CSV file detected");
+
+        const useTitleRow = await vscode.window.showQuickPick(["Yes", "No"], {
+          placeHolder: "Do you want to use the first row as the title?",
+        });
+
+        console.log("User selected title row option:", useTitleRow);
+
+        if (!useTitleRow) {
+          console.log("No selection made, exiting command");
           return;
         }
+
+        const useTitle = useTitleRow === "Yes";
 
         const panel = vscode.window.createWebviewPanel(
           "spreadsheetView",
@@ -35,59 +44,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
         panel.webview.html = getInitialWebviewContent();
 
-        // 初期表示のロード
-        loadAndSendCSVContent(filePath, panel);
+        console.log("Webview created");
 
-        // ファイルの変更を監視
-        context.subscriptions.push(
-          vscode.workspace.onDidChangeTextDocument((e) => {
-            if (e.document.fileName === filePath) {
-              loadAndSendCSVContent(filePath, panel);
-            }
-          }),
-        );
+        let titleRow = useTitle ? editor.document.lineAt(0).text : "";
 
-        // エディタのスクロールを監視
-        const editorScrollDisposable =
-          vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
-            if (event.textEditor.document.fileName === filePath) {
-              const firstVisibleLine =
-                event.textEditor.visibleRanges[0].start.line;
-              panel.webview.postMessage({
-                type: "scroll",
-                firstVisibleLine,
-              });
-            }
+        const updatePreview = async () => {
+          console.log("Updating preview");
+          const visibleRange = editor.visibleRanges[0];
+          const startLine = useTitle
+            ? Math.max(visibleRange.start.line, 1)
+            : visibleRange.start.line;
+          const endLine = visibleRange.end.line;
+
+          const visibleLines = [];
+          for (let i = startLine; i <= endLine; i++) {
+            visibleLines.push(editor.document.lineAt(i).text);
+          }
+
+          panel.webview.postMessage({
+            type: "update",
+            title: titleRow,
+            rows: visibleLines,
           });
-        context.subscriptions.push(editorScrollDisposable);
+
+          console.log("Preview updated:", { startLine, endLine });
+        };
+
+        await updatePreview();
+
+        // WebView が非アクティブになるイベントを監視
+        panel.onDidChangeViewState((e) => {
+          if (e.webviewPanel.active) {
+            console.log("WebView is no longer active, refocusing editor");
+            vscode.commands.executeCommand(
+              "workbench.action.focusPreviousGroup",
+            );
+          }
+        });
+
+        // 編集イベント
+        vscode.workspace.onDidChangeTextDocument((event) => {
+          if (event.document === editor.document) {
+            titleRow = useTitle ? editor.document.lineAt(0).text : "";
+            updatePreview();
+          }
+        });
+
+        // スクロールイベント
+        vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
+          if (event.textEditor === editor) {
+            updatePreview();
+          }
+        });
       },
     ),
   );
-}
-
-function loadAndSendCSVContent(filePath: string, panel: vscode.WebviewPanel) {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(filePath),
-    crlfDelay: Infinity,
-  });
-
-  let chunk: string[] = [];
-  const chunkSize = 50;
-
-  rl.on("line", (line) => {
-    chunk.push(line);
-    if (chunk.length >= chunkSize) {
-      panel.webview.postMessage({ type: "update", rows: chunk });
-      chunk = [];
-    }
-  });
-
-  rl.on("close", () => {
-    if (chunk.length > 0) {
-      panel.webview.postMessage({ type: "update", rows: chunk });
-    }
-    panel.webview.postMessage({ type: "done" });
-  });
 }
 
 function getInitialWebviewContent(): string {
@@ -103,13 +114,17 @@ function getInitialWebviewContent(): string {
           width: 100%;
           border-collapse: collapse;
         }
+        thead {
+          position: sticky;
+          top: 0;
+          background-color: #0078d4; /* 濃い青色 */
+          color: white; /* 文字色を白に */
+          z-index: 1;
+        }
         th, td {
           border: 1px solid #ddd;
           padding: 8px;
           text-align: left;
-        }
-        th {
-          background-color: #f4f4f4;
         }
         #table-container {
           overflow-y: auto;
@@ -118,15 +133,34 @@ function getInitialWebviewContent(): string {
       </style>
     </head>
     <body>
-      <div id="table-container"></div>
+      <div id="table-container">
+        <table id="csv-table">
+          <thead>
+            <tr id="csv-title-row"></tr>
+          </thead>
+          <tbody id="csv-body"></tbody>
+        </table>
+      </div>
       <script>
-        const tableContainer = document.getElementById('table-container');
+        const csvTable = document.getElementById('csv-table');
 
+        // WebView からのメッセージを受信
         window.addEventListener('message', event => {
           const message = event.data;
 
           if (message.type === 'update') {
-            const table = document.createElement('table');
+            // テーブルの更新処理
+            const csvTitleRow = document.getElementById('csv-title-row');
+            const csvBody = document.getElementById('csv-body');
+
+            csvTitleRow.innerHTML = '';
+            message.title.split(',').forEach(cell => {
+              const th = document.createElement('th');
+              th.textContent = cell.trim();
+              csvTitleRow.appendChild(th);
+            });
+
+            csvBody.innerHTML = '';
             message.rows.forEach(row => {
               const tr = document.createElement('tr');
               row.split(',').forEach(cell => {
@@ -134,18 +168,12 @@ function getInitialWebviewContent(): string {
                 td.textContent = cell.trim();
                 tr.appendChild(td);
               });
-              table.appendChild(tr);
+              csvBody.appendChild(tr);
             });
-            tableContainer.innerHTML = '';
-            tableContainer.appendChild(table);
-          } else if (message.type === 'scroll') {
-            const firstVisibleLine = message.firstVisibleLine;
-            const rows = tableContainer.getElementsByTagName('tr');
-            if (rows[firstVisibleLine]) {
-              rows[firstVisibleLine].scrollIntoView({ behavior: 'smooth' });
-            }
-          } else if (message.type === 'done') {
-            console.log('All rows loaded');
+
+          } else if (message.type === 'blur') {
+            // WebView のフォーカスを解除
+            // window.blur();
           }
         });
       </script>
