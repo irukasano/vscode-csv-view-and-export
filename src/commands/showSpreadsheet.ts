@@ -84,4 +84,37 @@ export async function showSpreadsheet(): Promise<void> {
       updatePreview();
     }
   });
+
+  // 検索選択時
+  vscode.window.onDidChangeTextEditorSelection((event) => {
+    const searchWord = getSearchWordFromEditor(event.textEditor); // 検索ワードを取得する関数
+    if (searchWord) {
+      panel.webview.postMessage({ type: "highlight", keyword: searchWord });
+    }
+  });
+}
+
+function getSearchWordFromEditor(
+  editor: vscode.TextEditor,
+): string | undefined {
+  // 現在のエディタが存在するかチェック
+  if (!editor) {
+    return undefined;
+  }
+
+  // 現在選択されているテキストを取得
+  const selection = editor.selection;
+  if (!selection.isEmpty) {
+    return editor.document.getText(selection); // 選択範囲のテキストを返す
+  }
+
+  // 選択範囲が空の場合、カーソル位置の単語を取得
+  const cursorWordRange = editor.document.getWordRangeAtPosition(
+    selection.active,
+  );
+  if (cursorWordRange) {
+    return editor.document.getText(cursorWordRange); // カーソル位置の単語を返す
+  }
+
+  return undefined; // 適切なワードが取得できない場合はundefinedを返す
 }

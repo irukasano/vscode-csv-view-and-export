@@ -42,6 +42,19 @@ export function getWebviewContent(): string {
         return cells;
     }
 
+    // 文字ハイライト
+    function highlightMatches(keyword) {
+        const content = document.getElementById('csv-table'); // CSVデータ表示部分
+        
+        if (!keyword) return;
+
+        // 既存のハイライトをリセット
+        content.innerHTML = content.innerHTML.replace(/<span class="highlight">(.*?)<\\/span>/gi, '$1');
+
+        const regex = new RegExp(keyword, 'gi');
+        content.innerHTML = content.innerHTML.replace(regex, (match) => \`<span class="highlight">\${match}</span>\`);
+    }
+
     // 日付判定関数
     function isValidDate(dateString) {
         const date = new Date(dateString);
@@ -68,7 +81,7 @@ export function getWebviewContent(): string {
             message.rows.forEach(row => {
                 const tr = document.createElement('tr');
                 const parsedRow = parseCsv(row);
-                console.log("ParsedRow:", parsedRow);
+                // console.log("ParsedRow:", parsedRow);
                 parsedRow.forEach(cell => {
                     const td = document.createElement('td');
                     const trimmedCell = cell.trim();
@@ -85,7 +98,9 @@ export function getWebviewContent(): string {
                 });
                 csvBody.appendChild(tr);
             });
-
+        }
+        if (message.type === 'highlight') {
+            highlightMatches(message.keyword);
         }
     });
 
@@ -129,6 +144,10 @@ export function getWebviewContent(): string {
         #table-container {
           overflow-y: auto;
           height: 100%;
+        }
+        .highlight {
+          background-color: yellow;
+          color: black;
         }
       </style>
     </head>
