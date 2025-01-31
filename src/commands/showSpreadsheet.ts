@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { getWebviewContent } from "../webview/webviewContent";
+import { parseCsv, getCsvColumnIndex } from "../utils/parseCsv";
 
 export async function showSpreadsheet(): Promise<void> {
   console.log("Command execution started");
@@ -48,7 +49,7 @@ export async function showSpreadsheet(): Promise<void> {
 
     const visibleLines = [];
     for (let i = startLine; i <= endLine; i++) {
-      visibleLines.push(editor.document.lineAt(i).text);
+      visibleLines.push(parseCsv(editor.document.lineAt(i).text));
     }
 
     panel.webview.postMessage({
@@ -60,7 +61,29 @@ export async function showSpreadsheet(): Promise<void> {
     console.log("Preview updated:", { startLine, endLine });
   };
 
+  const highlightCurrentPosition = async () => {
+    const visibleStartLine = editor.visibleRanges[0].start.line;
+    const cursorLine = editor.selection.active.line;
+    let relativeLine = cursorLine - visibleStartLine; // 表示範囲内の相対行番号
+    const col = getCsvColumnIndex(
+      editor.document.lineAt(cursorLine).text,
+      editor.selection.active.character,
+    );
+
+    // **タイトル行が Webビューに常に表示される かつ CSVエディタでは表示されていない場合のみ +1**
+    if (useTitle && visibleStartLine > 0) {
+      relativeLine += 1;
+    }
+
+    panel.webview.postMessage({
+      type: "highlight",
+      row: relativeLine,
+      col: col,
+    });
+  };
+
   await updatePreview();
+  await highlightCurrentPosition();
 
   // WebView が非アクティブになるイベントを監視
   panel.onDidChangeViewState((e) => {
@@ -75,6 +98,7 @@ export async function showSpreadsheet(): Promise<void> {
     if (event.document === editor.document) {
       titleRow = useTitle ? editor.document.lineAt(0).text : "";
       updatePreview();
+      highlightCurrentPosition();
     }
   });
 
@@ -82,39 +106,14 @@ export async function showSpreadsheet(): Promise<void> {
   vscode.window.onDidChangeTextEditorVisibleRanges((event) => {
     if (event.textEditor === editor) {
       updatePreview();
+      highlightCurrentPosition();
     }
   });
 
   // 検索選択時
   vscode.window.onDidChangeTextEditorSelection((event) => {
-    const searchWord = getSearchWordFromEditor(event.textEditor); // 検索ワードを取得する関数
-    if (searchWord) {
-      panel.webview.postMessage({ type: "highlight", keyword: searchWord });
+    if (event.textEditor === editor) {
+      highlightCurrentPosition();
     }
   });
-}
-
-function getSearchWordFromEditor(
-  editor: vscode.TextEditor,
-): string | undefined {
-  // 現在のエディタが存在するかチェック
-  if (!editor) {
-    return undefined;
-  }
-
-  // 現在選択されているテキストを取得
-  const selection = editor.selection;
-  if (!selection.isEmpty) {
-    return editor.document.getText(selection); // 選択範囲のテキストを返す
-  }
-
-  // 選択範囲が空の場合、カーソル位置の単語を取得
-  const cursorWordRange = editor.document.getWordRangeAtPosition(
-    selection.active,
-  );
-  if (cursorWordRange) {
-    return editor.document.getText(cursorWordRange); // カーソル位置の単語を返す
-  }
-
-  return undefined; // 適切なワードが取得できない場合はundefinedを返す
 }

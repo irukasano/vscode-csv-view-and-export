@@ -1,58 +1,36 @@
 export function getWebviewContent(): string {
   const scriptContent = `
-    function parseCsv(csvLine) {
-        const cells = [];
-        let currentCell = '';
-        let insideQuotes = false;
-
-        for (let i = 0; i < csvLine.length; i++) {
-            const char = csvLine[i];
-            const nextChar = csvLine[i + 1];
-
-            if (insideQuotes) {
-            if (char === '"' && nextChar === '"') {
-                // ダブルクォートがエスケープされた場合
-                currentCell += '"';
-                i++;
-            } else if (char === '"') {
-                // クォートの終了
-                insideQuotes = false;
-            } else {
-                currentCell += char;
-            }
-            } else {
-            if (char === '"') {
-                // クォートの開始
-                insideQuotes = true;
-            } else if (char === ',') {
-                // セルの区切り
-                cells.push(currentCell.trim());
-                currentCell = '';
-            } else {
-                currentCell += char;
-            }
-            }
-        }
-
-        // 最後のセルを追加
-        if (currentCell !== '') {
-            cells.push(currentCell.trim());
-        }
-
-        return cells;
-    }
-
-    // 文字ハイライト
-    function highlightMatches(keyword) {
-        const content = document.getElementById('csv-table'); // CSVデータ表示部分
-        
-        if (!keyword) return;
+    function highlightCell(row, col) {
+        const table = document.getElementById('csv-table');
+        if (!table) return;
 
         // 既存のハイライトをリセット
-        content.innerHTML = content.innerHTML.replace(/<span class="highlight">(.*?)<\\/span>/gi, '$1');
+        Array.from(table.getElementsByTagName('td')).forEach(cell => {
+            cell.classList.remove('highlight');
+        });
 
-        const regex = new RegExp(keyword, 'gi');
-        content.innerHTML = content.innerHTML.replace(regex, (match) => \`<span class="highlight">\${match}</span>\`);
+        const rows = table.getElementsByTagName('tr');
+
+        for (let r = 0; r < rows.length; r++) {
+            const cells = rows[r].getElementsByTagName('td');
+            for (let c = 0; c < cells.length; c++) {
+                if (r === row && c === col) {
+                    const targetCell = cells[c];
+
+                    // ハイライトを適用
+                    targetCell.classList.add('highlight');
+
+                    // **該当セルを画面中央にスクロール**
+                    targetCell.scrollIntoView({
+                        block: "center", // **垂直方向: 画面中央に配置**
+                        inline: "center", // **水平方向: 画面中央に配置**
+                        behavior: "smooth" // **スムーズにスクロール**
+                    });
+
+                    return; // ハイライトしたら即終了（ネストされたループを抜ける）
+                }
+            }
+        }
     }
 
     // 日付判定関数
@@ -80,8 +58,7 @@ export function getWebviewContent(): string {
             csvBody.innerHTML = '';
             message.rows.forEach(row => {
                 const tr = document.createElement('tr');
-                const parsedRow = parseCsv(row);
-                // console.log("ParsedRow:", parsedRow);
+                const parsedRow = row;
                 parsedRow.forEach(cell => {
                     const td = document.createElement('td');
                     const trimmedCell = cell.trim();
@@ -100,7 +77,7 @@ export function getWebviewContent(): string {
             });
         }
         if (message.type === 'highlight') {
-            highlightMatches(message.keyword);
+            highlightCell(message.row, message.col);
         }
     });
 
@@ -147,7 +124,8 @@ export function getWebviewContent(): string {
         }
         .highlight {
           background-color: yellow;
-          color: black;
+          color: black !important;
+          font-weight: bold;  
         }
       </style>
     </head>
